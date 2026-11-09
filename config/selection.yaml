@@ -1,0 +1,21 @@
+basic_stats:
+  high_corr_threshold: 0.90
+  vif_threshold: 10.0
+  vif_top_n: 30
+filter:
+  score_func: mutual_info
+  k: 30
+  random_state: 42
+hybrid:
+  k_features: 15
+  forward: true
+  floating: false
+  scoring: roc_auc
+  cv: 3
+embedded:
+  C: 0.05
+tree:
+  n_estimators: 200
+  n_repeats: 5
+  validation_share: 0.25
+  random_state: 42

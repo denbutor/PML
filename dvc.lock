@@ -1,0 +1,60 @@
+schema: '2.0'
+stages:
+  prepare:
+    cmd: python -m src.prepare_data
+    deps:
+    - path: config/data.yaml
+      hash: md5
+      md5: 0fd59ea6643c8ef9e91ce6199d7fcd0c
+      size: 1596
+    - path: config/multimodal.yaml
+      hash: md5
+      md5: 3b021555cf922042af384da4b41d1cbd
+      size: 3488
+    - path: data/raw/E Commerce Dataset.xlsx
+      hash: md5
+      md5: 3586e9c1cb117a645b062deae6a961c2
+      size: 555610
+    - path: data/raw/amazon
+      hash: md5
+      md5: b630c2c30a7110c322dd65091251f081.dir
+      size: 36142378
+      nfiles: 708
+    - path: src/data.py
+      hash: md5
+      md5: 03c7962d5d784abce967bddb1e2096f3
+      size: 6334
+    - path: src/extraction.py
+      hash: md5
+      md5: f4941f334b4742ebb151e8865239df28
+      size: 23570
+    - path: src/features.py
+      hash: md5
+      md5: ee98f4300f48d419a4b02d624771277b
+      size: 14907
+    - path: src/prepare_data.py
+      hash: md5
+      md5: dd81e6bd0868050ebb2d45002405524c
+      size: 5938
+    params:
+      config/hermetic.yaml:
+        split:
+          holdout_share: 0.2
+          seed: 42
+    outs:
+    - path: data/processed/dfs_columns.json
+      hash: md5
+      md5: fa22dfd34a8af312cb57206dc77c404e
+      size: 3738
+    - path: data/processed/holdout.csv
+      hash: md5
+      md5: ab601b00cd06d4746409a441404d753a
+      size: 2014815
+    - path: data/processed/reviews_linked.csv
+      hash: md5
+      md5: 0a8c107257693ba68e929b00cd7ee74a
+      size: 5540971
+    - path: data/processed/train.csv
+      hash: md5
+      md5: df967ac5608cff85b3db0bb7a1722284
+      size: 8127919

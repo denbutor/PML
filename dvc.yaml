@@ -1,0 +1,20 @@
+stages:
+  prepare:
+    cmd: python -m src.prepare_data
+    deps:
+      - data/raw/E Commerce Dataset.xlsx
+      - data/raw/amazon
+      - src/prepare_data.py
+      - src/data.py
+      - src/extraction.py
+      - src/features.py
+      - config/data.yaml
+      - config/multimodal.yaml
+    params:
+      - config/hermetic.yaml:
+          - split
+    outs:
+      - data/processed/train.csv
+      - data/processed/holdout.csv
+      - data/processed/reviews_linked.csv
+      - data/processed/dfs_columns.json

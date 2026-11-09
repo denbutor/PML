@@ -1,0 +1,6 @@
+outs:
+- md5: b630c2c30a7110c322dd65091251f081.dir
+  size: 36142378
+  nfiles: 708
+  hash: md5
+  path: amazon

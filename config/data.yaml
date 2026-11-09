@@ -1,0 +1,27 @@
+# Першоджерело та цільові змінні метаданих
+source:
+  path: data/raw/E Commerce Dataset.xlsx
+  sheet: E Comm
+  dataset: "Ecommerce Customer Churn Analysis and Prediction (Ankit Verma, Kaggle, 2021)"
+  url: https://www.kaggle.com/datasets/ankitverma2010/ecommerce-customer-churn-analysis-and-prediction
+id_column: CustomerID
+target: Churn                   # Бінарна мітка: 1 означає факт відтоку користувача
+
+# Політика обробки дублікатів (Запобігання Data Leakage)
+# Видалення повних повторів (за винятком ID) виконується суворо ДО валідаційного спліту.
+# Виявлено 556 дублікатів без суперечливих таргетів.
+# призводило до перенавчання через присутність однакових записів у train та test.
+# Оригінальний файл залишається незмінним.
+deduplicate: true
+
+# Штучне моделювання пропусків за методологією MCAR (Missing Completely at Random)
+# Базовий рівень пропусків у датасеті становить 4.5–5.5% (опрацьовується за базовою схемою).
+# Додаткова інжекція потрібна для стрес-тестування складніших алгоритмів відновлення.
+missing_injection:
+  mechanism: MCAR
+  seed: 42
+  columns:
+    # Числова ознака -> Потрапляє в проміжну зону (10-40%): Заповнення медіаною + Missing Indicator
+    CashbackAmount: 0.20
+    # Категоріальна ознака -> Рівень пропусків > 10%: Виділення пустих значень в окремий клас "Missing"
+    PreferedOrderCat: 0.15

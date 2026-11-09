@@ -1,5 +1,6 @@
+# Python 3.11 (.venv). Версії закріплені — вимога REFORMS (відтворюваність).
 numpy==2.4.6
-pandas==2.3.3
+pandas==2.3.3            # ЛР2: знижено з 3.1.0 — featuretools/woodwork не працюють з pandas 3
 scipy==1.17.1
 scikit-learn==1.9.1
 PyYAML==6.0.3
@@ -12,9 +13,14 @@ nbformat==5.11.1
 nbconvert==7.17.2
 ipykernel==7.4.0
 pytest==9.2.0
+# --- ЛР2 ---
 featuretools==1.31.0
 woodwork==0.31.0
 mlxtend==0.25.0
 scikit-image==0.26.0
 statsmodels==0.15.0
 requests==2.34.2
+# --- ЛР3 ---
+dvc==3.67.1
+imbalanced-learn==0.14.2
+optuna==5.0.0

@@ -1,0 +1,61 @@
+# Параметри завантаження зовнішнього текстово-візуального корпусу
+corpus:
+  name: "Amazon Reviews 2023 (McAuley Lab)"
+  homepage: https://amazon-reviews-2023.github.io
+  base_url: https://huggingface.co/datasets/McAuley-Lab/Amazon-Reviews-2023/resolve/main/raw/review_categories
+  out_dir: data/raw/amazon
+  # Лімітування вибірки (подрібнення N рядків), оскільки повні вихідні файли мають об'єм у гігабайти
+  lines_per_category:
+    Electronics: 20000
+    Cell_Phones_and_Accessories: 20000
+    Clothing_Shoes_and_Jewelry: 10000
+    Grocery_and_Gourmet_Food: 8000
+    Home_and_Kitchen: 8000
+  # Налаштування паралельного витягування бінарних зображень-прев'ю
+  images:
+    out_dir: data/raw/amazon/images
+    url_field: small_image_url    # Оптимальні мініатюри низької роздільної здатності (~256 px)
+    timeout_s: 20
+    max_workers: 16
+
+# Імітація синтетичного маппінгу (Заміна відсутнього наскрізного ключа; ТЗ, розділ 3)
+linkage:
+  seed: 42
+  id_column: CustomerID
+  category_column: PreferedOrderCat
+  rating_column: SatisfactionScore   # Оцінка відгуку підбирається за принципом найменшої евклідової відстані до задоволеності
+  count_column: OrderCount           # Кількість приєднаних сутностей = min(OrderCount, max_reviews); дефолт = 1
+  max_reviews: 5
+  category_map:                      # Словник узгодження синонімічних категорій нашого датасету з доменами Amazon
+    Laptop & Accessory: Electronics
+    Mobile Phone: Cell_Phones_and_Accessories
+    Mobile: Cell_Phones_and_Accessories
+    Fashion: Clothing_Shoes_and_Jewelry
+    Grocery: Grocery_and_Gourmet_Food
+    Others: Home_and_Kitchen
+  # Обробка пропусків у категоріях реалізується через редирект у випадковий міксований пул відгуків
+  cache: data/processed/reviews_linked.csv
+
+# Мультимодальний інжиніринг ознак (Feature Extraction)
+extraction:
+  text:   {max_features: 500, n_components: 5, random_state: 42} # TF-IDF + SVD для стиснення текстових ембедінгів
+  image:  {levels: 32, distances:, props: [contrast, correlation, energy, homogeneity]} # Текстурні фічі матриці GLCM
+  time:   {periods: {review_hour: 24, review_dow: 7}}            # Гармонічний розклад (Sin/Cos) циклічних часових ознак
+
+# Конфігурація глибокого синтезу ознак (Deep Feature Synthesis)
+dfs:
+  max_depth: 2
+  agg_primitives: [mean, max, count]
+  trans_primitives: [natural_logarithm, divide_numeric]   # Синтаксис адаптовано під Featuretools >= 1.0 (заміна застарілого 'log')
+  # Первинні атрибути клієнта для DFS (Виключено інваріантні/захищені ознаки!). divide_numeric оперує лише ними.
+  client_columns: [Tenure, OrderCount, CashbackAmount, CouponUsed, DaySinceLastOrder, HourSpendOnApp, WarehouseToHome, OrderAmountHikeFromlastYear]
+  # Фільтрація вибухового росту простору ознак (Базовий DFS генерує ~2.2 тис. ознак, переважно вторинні комбінації агрегатів).
+  # Стратегія стримування: Тотально залишаємо фічі глибини 1, а для другого рівня (depth 2) дозволяємо виключно
+  # логарифмування агрегованих показників. Також блокуємо логарифмування ознак, що мають від'ємні значення (запобігання появі NaN).
+  keep:
+    max_depth_default: 1
+    depth2_primitives: [NaturalLogarithm]
+    log_exclude_contains: [text_svd, _sin, _cos, img_correlation]
+  review_columns: [rating, text_len, text_svd_0, text_svd_1, text_svd_2, text_svd_3, text_svd_4,
+                   img_contrast, img_correlation, img_energy, img_homogeneity, has_image,
+                   review_hour_sin, review_hour_cos, review_dow_sin, review_dow_cos]

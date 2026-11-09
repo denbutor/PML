@@ -1,0 +1,84 @@
+model_family: partitioning
+
+feature_engineering:
+  - {type: bins,  name: TenureStage, source: Tenure, edges: [0, 1, 5, 12, 120]}   # 0 новий | 1 ранній | 2 постійний | 3 лояльний
+  - {type: ratio, name: RecencyRatio, numerator: DaySinceLastOrder, denominator: Tenure, denominator_scale: 30, epsilon: 1.0}
+  - {type: ratio, name: CashbackPerOrder, numerator: CashbackAmount, denominator: OrderCount}
+  - {type: ratio, name: CouponPerOrder,   numerator: CouponUsed,     denominator: OrderCount}
+  - {type: ratio, name: OrdersPerTenureMonth, numerator: OrderCount, denominator: Tenure, epsilon: 1.0}  # +1 міс.: новий клієнт (Tenure=0)
+  - {type: cross, name: Segment, sources: [PreferedOrderCat, MaritalStatus, SatisfactionScore, PreferredLoginDevice]}
+
+features:
+  numeric_continuous:
+    - Tenure
+    - WarehouseToHome
+    - HourSpendOnApp
+    - NumberOfDeviceRegistered
+    - NumberOfAddress
+    - OrderAmountHikeFromlastYear
+    - CouponUsed
+    - OrderCount
+    - DaySinceLastOrder
+    - CashbackAmount
+  numeric_binary:
+    - Complain
+  categorical_nominal:
+    - PreferredLoginDevice
+    - PreferredPaymentMode
+    - PreferedOrderCat
+    - MaritalStatus
+  categorical_ordinal:
+    - SatisfactionScore
+  # --- ЛР2 ---
+  engineered_ratio:
+    - RecencyRatio
+    - CashbackPerOrder
+    - CouponPerOrder
+    - OrdersPerTenureMonth
+  engineered_stage:
+    - TenureStage
+  high_cardinality:
+    - Segment
+
+protected_attributes: [CityTier, Gender]
+
+feature_kinds:
+  numeric_continuous: numeric
+  numeric_binary: numeric
+  categorical_nominal: categorical
+  categorical_ordinal: categorical
+  engineered_ratio: numeric
+  engineered_stage: numeric
+  high_cardinality: categorical
+
+value_aliases:
+  PreferredLoginDevice: {Phone: Mobile Phone}
+  PreferredPaymentMode: {CC: Credit Card, COD: Cash on Delivery}
+  PreferedOrderCat: {Mobile: Mobile Phone}
+
+imputation_policy:
+  numeric:
+    - {max_share: 0.10, strategy: median}
+    - {max_share: 0.40, strategy: median,   add_indicator: true}
+    - {max_share: 1.00, strategy: constant, fill_value: 0, add_indicator: true}
+  categorical:
+    - {max_share: 0.10, strategy: most_frequent}
+    - {max_share: 1.00, strategy: constant, fill_value: "Missing"}
+
+transform_policy:
+  additive:
+    numeric_continuous:  [log1p, standard_scaler]
+    numeric_binary:      [standard_scaler]
+    categorical_nominal: [oof_woe]
+    categorical_ordinal: [ordinal_encoder, standard_scaler]
+    engineered_ratio:    [yeo_johnson]
+    engineered_stage:    [standard_scaler]
+    high_cardinality:    [oof_woe]
+  partitioning:
+    numeric_continuous:  [{winsorize: {lower: 0.01, upper: 0.99}}]
+    numeric_binary:      []
+    categorical_nominal: [one_hot]
+    categorical_ordinal: [ordinal_encoder]
+    engineered_ratio:    [{winsorize: {lower: 0.01, upper: 0.99}}]
+    engineered_stage:    []
+    high_cardinality:    [oof_woe]
