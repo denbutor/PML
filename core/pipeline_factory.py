@@ -1,7 +1,7 @@
+"""Динамічний конфігуратор препроцесингу на основі параметрів у YAML."""
 from __future__ import annotations
-
-import copy
 from pathlib import Path
+import copy
 from typing import Any, Dict, List, Mapping, Tuple
 
 import numpy as np
@@ -12,309 +12,267 @@ from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.utils.validation import check_is_fitted
 
-from core.feature_transformers import (
-    TRANSFORMER_REGISTRY,
-    CategoryAliasStandardizer,
-    _ensure_dataframe,
-)
+from core.custom_transformers import TRANSFORMER_REGISTRY, CategoryAliasMapper
+from core.helpers import _to_dataframe
 
-BASE_DIR = Path(__file__).resolve().parents[1]
-
-REQUIRED_CONFIG_KEYS = (
+MANDATORY_CONFIG_KEYS = (
     "model_family",
     "features",
+    "feature_kinds",
     "protected_attributes",
     "imputation_policy",
     "transform_policy",
 )
 
+PROJECT_ROOT_DIR = Path(__file__).resolve().parents[1]
 
-def guard_config_integrity(config: dict) -> None:
-    """Перевіряє відсутність захищених ознак у списку робочих змінних."""
-    protected_set = set(config.get("protected_attributes", []))
+
+def validate_pipeline_config(config: dict) -> None:
+    """Перевіряє ізоляцію захищених атрибутів від списку моделей."""
+    protected = set(config.get("protected_attributes", []))
     feature_set = set()
+    for grp in config.get("features", {}).values():
+        feature_set.update(grp)
 
-    for cols in config.get("features", {}).values():
-        feature_set.update(cols)
-
-    leaked = protected_set & feature_set
+    leaked = protected & feature_set
     if leaked:
-        raise ValueError(
-            f"[Quality Gate Violation] Захищені ознаки потрапили в перелік features: {leaked}"
-        )
+        raise ValueError(f"Виявлено витік захищених атрибутів у список ознак: {leaked}")
 
 
-def _parse_step_spec(spec: Any) -> Tuple[str, Dict[str, Any]]:
+def _parse_step_definition(spec: Any) -> Tuple[str, Dict[str, Any]]:
     if isinstance(spec, str):
         return spec, {}
     if isinstance(spec, Mapping) and len(spec) == 1:
-        step_name, params = next(iter(spec.items()))
-        return str(step_name), dict(params or {})
-    raise ValueError(f"Некоректний формат опису кроку трансформації: {spec!r}")
+        step_name, step_args = next(iter(spec.items()))
+        return str(step_name), dict(step_args or {})
+    raise ValueError(f"Невалідний опис кроку: {spec}")
 
 
-def _verify_imputation_rules(category_name: str, rules_list: Any) -> None:
-    if not isinstance(rules_list, list) or not rules_list:
-        raise ValueError(
-            f"Секція imputation_policy.{category_name} має містити непорожній список."
-        )
-
-    thresholds = []
-    for rule in rules_list:
-        if "max_share" not in rule or "strategy" not in rule:
-            raise ValueError(
-                f"Правило в imputation_policy.{category_name} не містить max_share або strategy: {rule}"
-            )
-        if rule["strategy"] == "constant" and "fill_value" not in rule:
-            raise ValueError(
-                f"Стратегія 'constant' в imputation_policy.{category_name} вимагає fill_value: {rule}"
-            )
-        thresholds.append(float(rule["max_share"]))
-
-    if thresholds != sorted(thresholds) or len(set(thresholds)) != len(thresholds):
-        raise ValueError(
-            f"Пороги max_share в imputation_policy.{category_name} повинні строго зростати: {thresholds}"
-        )
-    if thresholds[-1] < 1.0:
-        raise ValueError(
-            f"Останній поріг у imputation_policy.{category_name} має дорівнювати 1.0 (поточний: {thresholds[-1]})"
-        )
-
-
-def validate_full_schema(config: dict) -> None:
-    missing = [k for k in REQUIRED_CONFIG_KEYS if k not in config]
+def validate_config_schema(config: dict) -> None:
+    """Валідатор структури YAML конфігуратора."""
+    missing = [key for key in MANDATORY_CONFIG_KEYS if key not in config]
     if missing:
-        raise ValueError(f"Відсутні обов'язкові конфігураційні секції: {missing}")
+        raise ValueError(f"У конфігураторі відсутні обов'язкові ключі: {missing}")
 
-    chosen_family = config["model_family"]
-    defined_families = config["transform_policy"]
-    if chosen_family not in defined_families:
-        raise ValueError(
-            f"Модельна родина '{chosen_family}' відсутня в transform_policy. Наявні: {list(defined_families.keys())}"
-        )
+    family = config["model_family"]
+    if family not in config["transform_policy"]:
+        raise ValueError(f"Родина моделей {family} відсутня у transform_policy")
 
-    feature_groups = config["features"]
-    registered_cols: Dict[str, str] = {}
+    seen_cols: Dict[str, str] = {}
+    for group_name, cols in config["features"].items():
+        for col in cols or []:
+            if col in seen_cols:
+                raise ValueError(f"Колонка {col} дублюється в групах {seen_cols[col]} та {group_name}")
+            seen_cols[col] = group_name
 
-    for group, columns in feature_groups.items():
-        for col in columns or []:
-            if col in registered_cols:
-                raise ValueError(
-                    f"Колонка '{col}' входить одночасно у декілька груп: '{registered_cols[col]}' та '{group}'"
-                )
-            registered_cols[col] = group
+class SmartMissingImputer(BaseEstimator, TransformerMixin):
+    """Динамічний імпутер пропусків за відсотковими порогами політики."""
 
-    for family_name, ruleset in defined_families.items():
-        missing_groups = set(feature_groups.keys()) - set(ruleset or {})
-        if missing_groups:
-            raise ValueError(
-                f"У родинній політиці '{family_name}' відсутні групи: {sorted(missing_groups)}"
-            )
+    def __init__(self, policy_rules: List[Dict[str, Any]], indicator_suffix: str = "__missing"):
+        self.policy_rules = policy_rules
+        self.indicator_suffix = indicator_suffix
 
-        for group, steps in (ruleset or {}).items():
-            for step_item in steps or []:
-                name, _ = _parse_step_spec(step_item)
-                if name not in TRANSFORMER_REGISTRY:
-                    raise ValueError(
-                        f"Невідомий трансформер '{name}' у transform_policy.{family_name}.{group}."
-                    )
-
-    for kind, rules in config["imputation_policy"].items():
-        _verify_imputation_rules(kind, rules)
-
-    unknown_aliases = set(config.get("value_aliases", {}).keys()) - set(registered_cols.keys())
-    if unknown_aliases:
-        raise ValueError(
-            f"value_aliases містить колонки, яких немає у features: {sorted(unknown_aliases)}"
-        )
-
-
-class ThresholdBasedImputer(BaseEstimator, TransformerMixin):
-    """Адаптивний імпутер: визначає стратегію за часткою пропусків на етапі fit."""
-
-    def __init__(self, rules_policy: List[Dict[str, Any]], missing_suffix: str = "__missing"):
-        self.rules_policy = rules_policy
-        self.missing_suffix = missing_suffix
-
-    def _match_rule(self, share: float) -> Dict[str, Any]:
-        for rule in self.rules_policy:
-            if share <= float(rule["max_share"]):
+    def _match_rule(self, missing_share: float) -> Dict[str, Any]:
+        for rule in self.policy_rules:
+            if missing_share <= float(rule["max_share"]):
                 return rule
-        raise ValueError(f"Не знайдено правила для частки пропусків {share:.4f}")
-
-    @staticmethod
-    def _compute_fill_value(series: pd.Series, rule: Dict[str, Any]):
-        strat = rule["strategy"]
-        if strat == "median":
-            val = series.median()
-        elif strat == "mean":
-            val = series.mean()
-        elif strat == "most_frequent":
-            modes = series.mode(dropna=True)
-            val = modes.iloc[0] if len(modes) > 0 else np.nan
-        elif strat == "constant":
-            val = rule["fill_value"]
-        else:
-            raise ValueError(f"Невідома стратегія заповнення пропусків: '{strat}'")
-
-        if pd.isna(val):
-            raise ValueError(f"Неможливо обчислити значення для колонки '{series.name}' зі стратегією '{strat}'")
-        return val.item() if hasattr(val, "item") else val
+        raise ValueError(f"Неможливо підібрати правило імпутації для частки {missing_share}")
 
     def fit(self, X, y=None):
-        _verify_imputation_rules("<ThresholdBasedImputer>", self.rules_policy)
-        X_df = _ensure_dataframe(X)
-        self.feature_names_in_ = np.asarray(X_df.columns, dtype=object)
-        self.fill_values_: Dict[str, Any] = {}
-        self.audit_log_: Dict[str, Dict[str, Any]] = {}
+        df = _to_dataframe(X)
+        self.feature_names_in_ = np.asarray(df.columns, dtype=object)
+        self.fill_values_ = {}
+        self.audit_ = {}
 
-        for col in X_df.columns:
-            share = float(X_df[col].isna().mean())
-            matched_rule = self._match_rule(share)
-            learned_val = self._compute_fill_value(X_df[col], matched_rule)
+        for col in df.columns:
+            share = float(df[col].isna().mean())
+            rule = self._match_rule(share)
+            strat = rule["strategy"]
 
-            self.fill_values_[col] = learned_val
-            self.audit_log_[col] = {
-                "observed_missing_share": round(share, 4),
-                "applied_threshold": float(matched_rule["max_share"]),
-                "chosen_strategy": matched_rule["strategy"],
-                "imputed_value": learned_val,
-                "created_indicator": bool(matched_rule.get("add_indicator", False)),
+            if strat == "median":
+                val = df[col].median()
+            elif strat == "most_frequent":
+                # Захист від Categorical при виклику mode()
+                col_obj = df[col].astype(object) if isinstance(df[col].dtype, pd.CategoricalDtype) else df[col]
+                modes = col_obj.mode(dropna=True)
+                val = modes.iloc[0] if len(modes) else "Missing"
+            elif strat == "constant":
+                val = rule["fill_value"]
+            else:
+                val = df[col].median()
+
+            self.fill_values_[col] = val
+            self.audit_[col] = {
+                "missing_share": round(share, 4),
+                "rule_max_share": float(rule["max_share"]),
+                "strategy": strat,
+                "fill_value": val,
+                "add_indicator": bool(rule.get("add_indicator", False)),
             }
         return self
 
     def transform(self, X):
-        check_is_fitted(self, "audit_log_")
-        X_df = _ensure_dataframe(X, self.feature_names_in_)
+        check_is_fitted(self, "fill_values_")
+        df = _to_dataframe(X, self.feature_names_in_)
+        out_dict = {}
+        indicators = {}
 
-        if list(X_df.columns) != list(self.feature_names_in_):
-            raise ValueError(
-                f"Невідповідність колонок на вході transform. Очікувалися: {list(self.feature_names_in_)}"
-            )
-
-        processed_cols = {}
-        indicator_cols = {}
-
-        for col in X_df.columns:
-            series = X_df[col]
-            missing_mask = series.isna()
+        for col in df.columns:
+            series = df[col]
+            mask = series.isna()
             fill_val = self.fill_values_[col]
 
-            if isinstance(fill_val, str) and not pd.api.types.is_string_dtype(series):
-                series = series.map(lambda item: item if pd.isna(item) else str(item))
-
-            if not pd.api.types.is_numeric_dtype(series):
+            # ОСНОВНЕ ВИПРАВЛЕННЯ: якщо колонка категоріальна або ми вставляємо рядок,
+            # примусово конвертуємо її в object тип до застосування .where()
+            if isinstance(series.dtype, pd.CategoricalDtype) or isinstance(fill_val, str):
                 series = series.astype(object)
 
-            processed_cols[col] = series.where(~missing_mask, fill_val)
+            out_dict[col] = series.where(~mask, fill_val)
+            if self.audit_[col]["add_indicator"]:
+                indicators[f"{col}{self.indicator_suffix}"] = mask.astype(float)
 
-            if self.audit_log_[col]["created_indicator"]:
-                indicator_cols[f"{col}{self.missing_suffix}"] = missing_mask.astype(float)
-
-        processed_cols.update(indicator_cols)
-        return pd.DataFrame(processed_cols, index=X_df.index)
+        out_dict.update(indicators)
+        return pd.DataFrame(out_dict, index=df.index)
 
     def get_feature_names_out(self, input_features=None):
-        check_is_fitted(self, "audit_log_")
-        base_names = list(self.feature_names_in_)
-        added_indicators = [
-            f"{c}{self.missing_suffix}"
-            for c in self.feature_names_in_
-            if self.audit_log_[c]["created_indicator"]
-        ]
-        return np.asarray(base_names + added_indicators, dtype=object)
+        check_is_fitted(self, "audit_")
+        base = list(self.feature_names_in_)
+        inds = [f"{c}{self.indicator_suffix}" for c in self.feature_names_in_ if self.audit_[c]["add_indicator"]]
+        return np.asarray(base + inds, dtype=object)
 
 
-class PipelineSchemaComposer:
-    """Збирає ненавчений ColumnTransformer за декларативною YAML-конфігурацією."""
+# class SmartMissingImputer(BaseEstimator, TransformerMixin):
+#     """Динамічний імпутер пропусків за відсотковими порогами політики."""
+#
+#     def __init__(self, policy_rules: List[Dict[str, Any]], indicator_suffix: str = "__missing"):
+#         self.policy_rules = policy_rules
+#         self.indicator_suffix = indicator_suffix
+#
+#     def _match_rule(self, missing_share: float) -> Dict[str, Any]:
+#         for rule in self.policy_rules:
+#             if missing_share <= float(rule["max_share"]):
+#                 return rule
+#         raise ValueError(f"Неможливо підібрати правило імпутації для частки {missing_share}")
+#
+#     def fit(self, X, y=None):
+#         df = _to_dataframe(X)
+#         self.feature_names_in_ = np.asarray(df.columns, dtype=object)
+#         self.fill_values_ = {}
+#         self.audit_ = {}
+#
+#         for col in df.columns:
+#             share = float(df[col].isna().mean())
+#             rule = self._match_rule(share)
+#             strat = rule["strategy"]
+#
+#             if strat == "median":
+#                 val = df[col].median()
+#             elif strat == "most_frequent":
+#                 modes = df[col].mode(dropna=True)
+#                 val = modes.iloc[0] if len(modes) else "Missing"
+#             elif strat == "constant":
+#                 val = rule["fill_value"]
+#             else:
+#                 val = df[col].median()
+#
+#             self.fill_values_[col] = val
+#             self.audit_[col] = {
+#                 "missing_share": round(share, 4),
+#                 "rule_max_share": float(rule["max_share"]),
+#                 "strategy": strat,
+#                 "fill_value": val,
+#                 "add_indicator": bool(rule.get("add_indicator", False)),
+#             }
+#         return self
+#
+#     def transform(self, X):
+#         check_is_fitted(self, "fill_values_")
+#         df = _to_dataframe(X, self.feature_names_in_)
+#         out_dict = {}
+#         indicators = {}
+#
+#         for col in df.columns:
+#             series = df[col]
+#             mask = series.isna()
+#             fill_val = self.fill_values_[col]
+#
+#             if isinstance(fill_val, str) and not pd.api.types.is_string_dtype(series):
+#                 series = series.map(lambda v: v if pd.isna(v) else str(v))
+#
+#             out_dict[col] = series.where(~mask, fill_val)
+#             if self.audit_[col]["add_indicator"]:
+#                 indicators[f"{col}{self.indicator_suffix}"] = mask.astype(float)
+#
+#         out_dict.update(indicators)
+#         return pd.DataFrame(out_dict, index=df.index)
+#
+#     def get_feature_names_out(self, input_features=None):
+#         check_is_fitted(self, "audit_")
+#         base = list(self.feature_names_in_)
+#         inds = [f"{c}{self.indicator_suffix}" for c in self.feature_names_in_ if self.audit_[c]["add_indicator"]]
+#         return np.asarray(base + inds, dtype=object)
 
-    STEP_ALIASES = "alias_mapper"
-    STEP_IMPUTER = "imputer"
 
-    def __init__(self, config_filepath: str | Path):
-        path = Path(config_filepath)
-        if not path.is_absolute():
-            path = BASE_DIR / path
+class ConfigurablePipelineFactory:
+    """Конструює об'єкт ColumnTransformer відповідно до правил YAML."""
 
-        with open(path, encoding="utf-8") as f:
+    def __init__(self, config_filepath: str):
+        with open(config_filepath, encoding="utf-8") as f:
             self.config = yaml.safe_load(f)
-        guard_config_integrity(self.config)
-        validate_full_schema(self.config)
+        validate_pipeline_config(self.config)
+        validate_config_schema(self.config)
 
-    def _determine_category(self, group_name: str) -> str:
-        if group_name.startswith("numeric"):
-            return "numeric"
-        if group_name.startswith("categorical"):
-            return "categorical"
-        raise ValueError(f"Неможливо автоматично визначити категорію для групи: '{group_name}'")
-
-    def _assemble_group_pipeline(
-        self, group: str, columns: List[str], model_family: str
-    ) -> List[Tuple[str, Any]]:
+    def _assemble_group_pipeline(self, group_name: str, cols: List[str], family: str) -> List[Tuple[str, Any]]:
         cfg = self.config
-        pipeline_steps: List[Tuple[str, Any]] = []
+        steps = []
 
-        aliases_subset = {
-            col: cfg["value_aliases"][col]
-            for col in columns
-            if col in cfg.get("value_aliases", {})
-        }
-        if aliases_subset:
-            pipeline_steps.append(
-                (self.STEP_ALIASES, CategoryAliasStandardizer(alias_map=copy.deepcopy(aliases_subset)))
-            )
+        aliases = {c: cfg["value_aliases"][c] for c in cols if c in (cfg.get("value_aliases") or {})}
+        if aliases:
+            steps.append(("aliases", CategoryAliasMapper(mapping=copy.deepcopy(aliases))))
 
-        cat_type = self._determine_category(group)
-        impute_rules = cfg["imputation_policy"][cat_type]
-        pipeline_steps.append(
-            (self.STEP_IMPUTER, ThresholdBasedImputer(rules_policy=copy.deepcopy(impute_rules)))
-        )
+        kind = cfg["feature_kinds"][group_name]
+        steps.append(("imputer", SmartMissingImputer(policy_rules=copy.deepcopy(cfg["imputation_policy"][kind]))))
 
-        existing_step_names = {name for name, _ in pipeline_steps}
-        transform_sequence = cfg["transform_policy"][model_family][group] or []
+        for spec in cfg["transform_policy"][family][group_name] or []:
+            step_type, kwargs = _parse_step_definition(spec)
+            step_obj = TRANSFORMER_REGISTRY[step_type](**copy.deepcopy(kwargs))
+            steps.append((f"{step_type}_{len(steps)}", step_obj))
 
-        for step_spec in transform_sequence:
-            name, params = _parse_step_spec(step_spec)
-            unique_name = (
-                name
-                if name not in existing_step_names
-                else f"{name}_{len(pipeline_steps)}"
-            )
-            existing_step_names.add(unique_name)
+        return steps
 
-            transformer_factory = TRANSFORMER_REGISTRY[name]
-            instance = transformer_factory(**copy.deepcopy(params))
-            pipeline_steps.append((unique_name, instance))
-
-        return pipeline_steps
-
-    def assemble(self) -> ColumnTransformer:
+    def build(self) -> ColumnTransformer:
         family = self.config["model_family"]
-        transformer_tuples = []
-
-        for group_name, cols in self.config["features"].items():
+        transformers = []
+        for grp, cols in self.config["features"].items():
             if not cols:
                 continue
-            group_pipe = Pipeline(
-                self._assemble_group_pipeline(group_name, list(cols), family)
-            )
-            transformer_tuples.append((group_name, group_pipe, list(cols)))
+            pipe_steps = self._assemble_group_pipeline(grp, list(cols), family)
+            transformers.append((grp, Pipeline(pipe_steps), list(cols)))
+        return ColumnTransformer(transformers=transformers, remainder="drop", verbose_feature_names_out=False)
 
-        return ColumnTransformer(
-            transformers=transformer_tuples,
-            remainder="drop",
-            verbose_feature_names_out=False,
-        )
-
-    def extract_audit_summary(self, fitted_ct: ColumnTransformer) -> pd.DataFrame:
-        check_is_fitted(fitted_ct, "transformers_")
+    def policy_summary(self) -> pd.DataFrame:
         records = []
-
-        for group_name, pipe_obj, _ in fitted_ct.transformers_:
-            if not isinstance(pipe_obj, Pipeline):
-                continue
-            imputer_obj = pipe_obj.named_steps[self.STEP_IMPUTER]
-            for feat, info in imputer_obj.audit_log_.items():
-                records.append({"feature": feat, "group": group_name, **info})
-
+        for grp in self.config["features"]:
+            rec = {"group": grp}
+            for fam, pol in self.config["transform_policy"].items():
+                chain = [_parse_step_definition(s)[0] for s in (pol.get(grp) or [])]
+                rec[fam] = " -> ".join(chain) if chain else "passthrough"
+            records.append(rec)
         return pd.DataFrame(records)
+
+    class ConfigurablePipelineFactory:
+        """Конструює об'єкт ColumnTransformer відповідно до правил YAML."""
+
+        def __init__(self, config_filepath: str | Path):
+            path = Path(config_filepath)
+            if not path.is_absolute():
+                path = PROJECT_ROOT_DIR / path
+
+            if not path.exists():
+                raise FileNotFoundError(f"Конфігураційний файл не знайдено: {path}")
+
+            with open(path, encoding="utf-8") as f:
+                self.config = yaml.safe_load(f)
+
+            validate_pipeline_config(self.config)
+            validate_config_schema(self.config)

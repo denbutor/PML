@@ -10,7 +10,7 @@ import yaml
 BASE_DIR = Path(__file__).resolve().parents[1]
 
 
-def read_data_config(cfg_path: str | Path = "configs/dataset_config.yaml") -> dict:
+def read_data_config(cfg_path: str | Path = "config/dataset_config.yaml") -> dict:
     target_path = Path(cfg_path)
     if not target_path.is_absolute():
         target_path = BASE_DIR / target_path

@@ -1,0 +1,10 @@
+Feature,Filter,Hybrid_SFS,Embedded_L1,Tree_RF,votes
+feat_04,True,True,True,True,4
+feat_07,True,True,True,True,4
+feat_06,True,True,True,True,4
+feat_14,True,True,True,True,4
+feat_03,True,True,False,True,3
+feat_11,True,False,False,True,2
+feat_13,True,True,False,False,2
+feat_20,False,True,False,True,2
+feat_21,False,True,False,True,2

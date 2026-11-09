@@ -1,0 +1,7 @@
+Experiment,LR,RF,Diff_to_Exp3_LR
+0. Non-ML Heuristic,0.7404,0.7404,-0.0882
+1. Baseline,0.8690,0.9621,0.0404
+2. Manual FE,0.8767,0.9566,0.0481
+3. Extracted + AutoFE,0.8286,0.9177,0.0000
+3_no_selection. Full Space,0.8898,0.9256,0.0613
+4. Leaky Pipeline,0.8599,0.9270,0.0313

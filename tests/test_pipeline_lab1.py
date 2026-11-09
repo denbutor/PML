@@ -13,8 +13,8 @@ from core.pipeline_factory import PipelineSchemaComposer, ThresholdBasedImputer
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 CONFIG_PATHS = [
-    ROOT_DIR / "configs" / "pipeline_linear.yaml",
-    ROOT_DIR / "configs" / "pipeline_tree.yaml",
+    ROOT_DIR / "config" / "pipeline_linear.yaml",
+    ROOT_DIR / "config" / "pipeline_tree.yaml",
 ]
 
 SAMPLE_POLICY = [

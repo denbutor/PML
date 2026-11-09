@@ -1,0 +1,50 @@
+corpus:
+  name: "Amazon Reviews 2023 (McAuley Lab)"
+  homepage: https://amazon-reviews-2023.github.io
+  base_url: https://huggingface.co/datasets/McAuley-Lab/Amazon-Reviews-2023/resolve/main/raw/review_categories
+  out_dir: data/raw/amazon
+  lines_per_category:
+    Electronics: 20000
+    Cell_Phones_and_Accessories: 20000
+    Clothing_Shoes_and_Jewelry: 10000
+    Grocery_and_Gourmet_Food: 8000
+    Home_and_Kitchen: 8000
+  images:
+    out_dir: data/raw/amazon/images
+    url_field: small_image_url
+    timeout_s: 20
+    max_workers: 16
+
+linkage:
+  seed: 42
+  id_column: CustomerID
+  category_column: PreferedOrderCat
+  rating_column: SatisfactionScore
+  count_column: OrderCount
+  max_reviews: 5
+  category_map:
+    Laptop & Accessory: Electronics
+    Mobile Phone: Cell_Phones_and_Accessories
+    Mobile: Cell_Phones_and_Accessories
+    Fashion: Clothing_Shoes_and_Jewelry
+    Grocery: Grocery_and_Gourmet_Food
+    Others: Home_and_Kitchen
+  cache: data/processed/reviews_linked.csv
+
+extraction:
+  text: {max_features: 500, n_components: 5, random_state: 42}
+  image: {levels: 32, distances: [1], props: [contrast, correlation, energy, homogeneity]}
+  time: {periods: {review_hour: 24, review_dow: 7}}
+
+dfs:
+  max_depth: 2
+  agg_primitives: [mean, max, count]
+  trans_primitives: [natural_logarithm, divide_numeric]
+  client_columns: [Tenure, OrderCount, CashbackAmount, CouponUsed, DaySinceLastOrder, HourSpendOnApp, WarehouseToHome, OrderAmountHikeFromlastYear]
+  keep:
+    max_depth_default: 1
+    depth2_primitives: [NaturalLogarithm]
+    log_exclude_contains: [text_svd, _sin, _cos, img_correlation]
+  review_columns: [rating, text_len, text_svd_0, text_svd_1, text_svd_2, text_svd_3, text_svd_4,
+                   img_contrast, img_correlation, img_energy, img_homogeneity, has_image,
+                   review_hour_sin, review_hour_cos, review_dow_sin, review_dow_cos]
