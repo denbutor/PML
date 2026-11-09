@@ -1,0 +1,75 @@
+model_family: scale_sensitive
+
+features:
+  numeric_continuous:
+    - Tenure
+    - WarehouseToHome
+    - HourSpendOnApp
+    - NumberOfDeviceRegistered
+    - NumberOfAddress
+    - OrderAmountHikeFromlastYear
+    - CouponUsed
+    - OrderCount
+    - DaySinceLastOrder
+    - CashbackAmount
+  numeric_binary:
+    - Complain
+  categorical_nominal:
+    - PreferredLoginDevice
+    - PreferredPaymentMode
+    - PreferedOrderCat
+    - MaritalStatus
+  categorical_ordinal:
+    - SatisfactionScore
+
+protected_attributes:
+  - CityTier
+  - Gender
+
+value_aliases:
+  PreferredLoginDevice:
+    Phone: Mobile Phone
+  PreferredPaymentMode:
+    CC: Credit Card
+    COD: Cash on Delivery
+    Mobile: Mobile Phone
+
+imputation_policy:
+  numeric:
+    - max_share: 0.10
+      strategy: median
+    - max_share: 0.40
+      strategy: median
+      add_indicator: true
+    - max_share: 1.00
+      strategy: constant
+      fill_value: 0
+      add_indicator: true
+  categorical:
+    - max_share: 0.10
+      strategy: most_frequent
+    - max_share: 1.00
+      strategy: constant
+      fill_value: Missing
+
+transform_policy:
+  scale_sensitive:
+    numeric_continuous:
+      - log1p
+      - standard_scaler
+    numeric_binary:
+      - standard_scaler
+    categorical_nominal:
+      - woe_encoder
+    categorical_ordinal:
+      - ordinal_encoder
+      - standard_scaler
+  scale_invariant:
+    numeric_continuous:
+      - winsorizer
+    numeric_binary:
+      - passthrough
+    categorical_nominal:
+      - one_hot_encoder
+    categorical_ordinal:
+      - ordinal_encoder

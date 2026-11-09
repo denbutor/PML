@@ -1,0 +1,15 @@
+source:
+  file_path: data/raw/E Commerce Dataset.xlsx
+  sheet_name: E Comm
+  dataset_title: "Ecommerce Customer Churn Analysis and Prediction (Ankit Verma, Kaggle, 2021)"
+  url: https://www.kaggle.com/datasets/ankitverma2010/ecommerce-customer-churn-analysis-and-prediction
+
+id_field: CustomerID
+target_field: Churn
+
+missing_data_injection:
+  strategy: MCAR
+  random_seed: 42
+  target_shares:
+    CashbackAmount: 0.20
+    PreferedOrderCat: 0.15
