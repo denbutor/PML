@@ -29,7 +29,7 @@ python -m venv .venv
 pip install -r requirements.txt
 
 # Перевірка цілісності пайплайнів
-python verify_pipelines.py
+python verify_pipelines.py або python run_verifications.py
 
 # Запуск автотестів
 pytest -q
