@@ -1,0 +1,59 @@
+#Dashboard    http://localhost:8501
+#Swagger    http://localhost:8000/docs
+#MLflow UI  http://localhost:5000
+
+x-image: &image
+  build: {context: ., dockerfile: deploy/Dockerfile}
+  image: churnguard:lab5
+
+services:
+  mlflow:
+    <<: *image
+    command: >
+      mlflow server --host 0.0.0.0 --port 5000
+      --backend-store-uri sqlite:////mlflow/mlflow.db --artifacts-destination /mlflow/artifacts
+      --allowed-hosts "mlflow:5000,localhost:5000,127.0.0.1:5000"
+    ports: ["5000:5000"]
+    volumes: [mlflow-data:/mlflow]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  seed:
+    <<: *image
+    command: ["python", "deploy/seed_registry.py"]
+    environment: {MLFLOW_TRACKING_URI: "http://mlflow:5000"}
+    depends_on: {mlflow: {condition: service_healthy}}
+    restart: "no"
+
+  api:
+    <<: *image
+    command: ["uvicorn", "src.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      MODEL_SOURCE: mlflow
+      MLFLOW_TRACKING_URI: "http://mlflow:5000"
+      FEEDBACK_DB: /data/feedback.db
+    ports: ["8000:8000"]
+    volumes: [feedback-data:/data]
+    depends_on:
+      mlflow: {condition: service_healthy}
+      seed: {condition: service_completed_successfully}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+
+  dashboard:
+    <<: *image
+    command: ["streamlit", "run", "src/dashboard/app.py", "--server.port", "8501", "--server.address", "0.0.0.0",
+              "--server.headless", "true"]
+    environment: {API_URL: "http://api:8000"}
+    ports: ["8501:8501"]
+    depends_on: {api: {condition: service_healthy}}
+
+volumes:
+  mlflow-data:
+  feedback-data:
